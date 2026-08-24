@@ -1,4 +1,33 @@
 # Repo RAG — RAG-база из markdown-документации GitHub-репозитория + Ollama
+.env.example
+# Скопируй этот файл в .env и поправь под себя:
+#   cp .env.example .env
+
+# ---- Репозиторий ----
+# URL публичного или приватного (тогда нужен токен в URL) репозитория
+REPO_URL=...
+# Локальная папка, куда будет склонирован репозиторий
+REPO_PATH=./data/repo
+# Ветка, которую тянем
+REPO_BRANCH=main
+
+# ---- Ollama ----
+OLLAMA_HOST=http://localhost:11434
+EMBED_MODEL=nomic-embed-text
+LLM_MODEL=qwen2.5:14b
+
+# ---- Векторная БД (Chroma, локально на диске) ----
+CHROMA_PATH=./data/chroma_db
+COLLECTION_NAME=repo_docs
+
+# ---- Чанкинг ----
+CHUNK_SIZE=800
+CHUNK_OVERLAP=100
+
+# ---- API ----
+API_HOST=0.0.0.0
+API_PORT=8000
+
 
 Что делает проект:
 1. Клонирует / обновляет (`git pull`) репозиторий с GitHub
@@ -24,7 +53,7 @@
   ollama pull qwen2.5:14b
   ollama pull nomic-embed-text
   ```
-- Python 3.10+ (`python3 --version`)
+- Python 3.12 (`python3 --version`)
 - Git (`git --version`)
 
 ---
