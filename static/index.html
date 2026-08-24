@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Repo RAG</title>
+<style>
+  /* ============================================================
+     ЦВЕТОВАЯ ТЕМА — меняй только здесь, остальной CSS не трогай.
+     Просто подставь свои значения в hex/rgb ниже.
+     ============================================================ */
+  :root {
+    --bg: #0f1117;              /* фон всей страницы */
+    --panel-bg: #1a1d27;        /* фон карточек/панелей */
+    --border: #2a2e3a;          /* цвет рамок */
+    --text: #e6e6e9;            /* основной текст */
+    --text-muted: #9098a8;      /* приглушённый текст (подписи, источники) */
+    --accent: #0d0b9d;          /* акцентный цвет (кнопка, ссылки, курсор фокуса) */
+    --accent-hover: #5578e8;    /* акцент при наведении */
+    --user-bubble: #2a2e3a;     /* фон сообщения пользователя */
+    --assistant-bubble: #1a1d27;/* фон сообщения ассистента */
+    --error: #ff6b6b;           /* цвет ошибок */
+    --radius: 12px;             /* скругление углов везде */
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+
+  header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  header h1 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--text);
+  }
+
+  #status {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  #status.error { color: var(--error); }
+
+  #chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    max-width: 800px;
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  .message {
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    max-width: 85%;
+    white-space: pre-wrap;
+    line-height: 1.5;
+    font-size: 14px;
+  }
+
+  .message.user {
+    background: var(--user-bubble);
+    align-self: flex-end;
+  }
+
+  .message.assistant {
+    background: var(--assistant-bubble);
+    border: 1px solid var(--border);
+    align-self: flex-start;
+  }
+
+  .sources {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .sources div { margin-top: 4px; }
+
+  .loading {
+    align-self: flex-start;
+    color: var(--text-muted);
+    font-size: 14px;
+    font-style: italic;
+  }
+
+  form {
+    display: flex;
+    gap: 8px;
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    max-width: 800px;
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  textarea {
+    flex: 1;
+    resize: none;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 12px 14px;
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+    height: 48px;
+  }
+
+  textarea:focus {
+    border-color: var(--accent);
+  }
+
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: var(--radius);
+    padding: 0 20px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  button:hover { background: var(--accent-hover); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Repo RAG</h1>
+  <span id="status">проверка соединения…</span>
+</header>
+
+<div id="chat"></div>
+
+<form id="form">
+  <textarea id="input" placeholder="Задай вопрос по документации…" autofocus></textarea>
+  <button id="send" type="submit">Отправить</button>
+</form>
+
+<script>
+const chat = document.getElementById('chat');
+const form = document.getElementById('form');
+const input = document.getElementById('input');
+const sendBtn = document.getElementById('send');
+const statusEl = document.getElementById('status');
+
+// Проверка соединения с сервером при загрузке страницы
+fetch('/health')
+  .then(r => r.json())
+  .then(data => {
+    if (data.status === 'ok') {
+      statusEl.textContent = `подключено · ${data.chunks_in_db} чанков в базе · ${data.llm_model}`;
+      statusEl.classList.remove('error');
+    } else {
+      throw new Error(data.detail || 'неизвестная ошибка');
+    }
+  })
+  .catch(err => {
+    statusEl.textContent = 'нет соединения с сервером';
+    statusEl.classList.add('error');
+  });
+
+function addMessage(role, text) {
+  const div = document.createElement('div');
+  div.className = `message ${role}`;
+  div.textContent = text;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  return div;
+}
+
+function addLoading() {
+  const div = document.createElement('div');
+  div.className = 'loading';
+  div.textContent = 'Ищу по документации…';
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  return div;
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const question = input.value.trim();
+  if (!question) return;
+
+  addMessage('user', question);
+  input.value = '';
+  sendBtn.disabled = true;
+  const loadingEl = addLoading();
+
+  try {
+    const res = await fetch('/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, top_k: 5 })
+    });
+
+    if (!res.ok) throw new Error(`Сервер вернул ошибку ${res.status}`);
+    const data = await res.json();
+
+    loadingEl.remove();
+    const answerDiv = addMessage('assistant', data.answer);
+
+    if (data.sources && data.sources.length > 0) {
+      const sourcesDiv = document.createElement('div');
+      sourcesDiv.className = 'sources';
+      sourcesDiv.innerHTML = '<strong>Источники:</strong>' +
+        data.sources.map(s => `<div>${s.file} — ${s.section || ''}</div>`).join('');
+      answerDiv.appendChild(sourcesDiv);
+    }
+  } catch (err) {
+    loadingEl.remove();
+    addMessage('assistant', `Ошибка: ${err.message}`);
+  } finally {
+    sendBtn.disabled = false;
+    input.focus();
+  }
+});
+
+// Отправка по Enter, перенос строки по Shift+Enter
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    form.requestSubmit();
+  }
+});
+</script>
+
+</body>
+</html>
