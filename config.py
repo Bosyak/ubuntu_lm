@@ -30,6 +30,15 @@ COLLECTION_NAME = _get("COLLECTION_NAME", "repo_docs")
 CHUNK_SIZE = int(_get("CHUNK_SIZE", "800"))
 CHUNK_OVERLAP = int(_get("CHUNK_OVERLAP", "100"))
 
+# Расширение запроса через LLM перед поиском - помогает найти чанки,
+# когда вопрос и документация используют разную терминологию/язык
+# (например "материализованные представления" в вопросе vs "MATERIALIZED VIEW" в тексте)
+ENABLE_QUERY_EXPANSION = _get("ENABLE_QUERY_EXPANSION", "true").lower() == "true"
+# Какой моделью расширять запрос. Пусто = использовать ту же LLM_MODEL.
+# Можно указать модель полегче (например qwen2.5:3b) - расширение простое,
+# тяжёлая модель для этого не обязательна и это ускорит ответ.
+EXPANSION_MODEL = _get("EXPANSION_MODEL", "")
+
 # Файл с состоянием индексации (какие файлы уже проиндексированы и с каким хэшем)
 STATE_FILE = os.path.join(os.path.dirname(REPO_PATH.rstrip("/")) or ".", "index_state.json")
 

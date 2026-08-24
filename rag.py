@@ -5,8 +5,16 @@
   - векторный (семантическая близость) - хорош для вопросов "как" / "почему" / смысловых
   - BM25 по ключевым словам - хорош для точных терминов, имён файлов, названий папок
 Результаты обоих сливаются через Reciprocal Rank Fusion (RRF).
+
+Дополнительно запрос раскрывается через glossary.json - если документация написана
+смешанно (русские вопросы, английские технические термины типа MATERIALIZED VIEW),
+чистый поиск может не сматчить "материализованное представление" с "MATERIALIZED VIEW",
+потому что для BM25 это разные слова, а для векторной модели - не всегда близкие
+по смыслу термины. Глоссарий подставляет известные эквиваленты прямо в текст запроса.
 """
+import json
 import re
+from pathlib import Path
 
 import ollama
 from rank_bm25 import BM25Okapi
@@ -21,6 +29,101 @@ SYSTEM_PROMPT = """Ты — ассистент, отвечающий на воп
 Обязательно указывай, из какого файла взята информация (смотри пометки [Файл: ...] в контексте)."""
 
 _TOKEN_RE = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9_]+")
+
+GLOSSARY_PATH = Path(__file__).parent / "glossary.json"
+
+
+def _load_glossary() -> list[list[str]]:
+    if not GLOSSARY_PATH.exists():
+        return []
+    with open(GLOSSARY_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+_GLOSSARY = _load_glossary()  # опционально, глоссарий может быть пустым - см. glossary.json
+
+
+EXPANSION_PROMPT = """Дан вопрос пользователя к технической документации: "{question}"
+
+Сгенерируй короткий список альтернативных формулировок для улучшения поиска по базе документов:
+- переводы терминов (русский <-> английский)
+- синонимы и связанные технические термины
+- сокращения/аббревиатуры, если уместны
+
+Правила:
+- Выведи ТОЛЬКО слова и словосочетания через запятую, без объяснений и без кавычек
+- Не больше 8 вариантов
+- Если вопрос уже на английском - добавь русские эквиваленты, и наоборот
+- Если термин узкоспециализированный - обязательно дай его точный технический эквивалент
+
+Пример:
+Вопрос: "материализованные представления"
+Ответ: materialized view, matview, представление, view
+
+Ответ:"""
+
+
+def _expand_query_glossary(question: str) -> list[str]:
+    """
+    Быстрое, бесплатное (без похода к LLM) расширение через glossary.json.
+    Работает по основам слов, покрывает падежи/склонения. Файл опциональный -
+    если пустой или не нужен, просто ничего не добавляет.
+    """
+    lower_q = question.lower()
+    extra_terms = []
+    for group in _GLOSSARY:
+        if any(term.lower() in lower_q for term in group):
+            for term in group:
+                if term.lower() not in lower_q and term not in extra_terms:
+                    extra_terms.append(term)
+    return extra_terms
+
+
+def _expand_query_llm(question: str) -> list[str]:
+    """
+    Просит LLM сгенерировать синонимы/переводы/термины для расширения поиска.
+    Универсальный подход - не требует ручного ведения словаря, LLM сама
+    понимает контекст и может предложить нужный технический эквивалент
+    на другом языке, даже для терминов, которые никто заранее не прописал.
+    """
+    if not config.ENABLE_QUERY_EXPANSION:
+        return []
+
+    model = config.EXPANSION_MODEL or config.LLM_MODEL
+    try:
+        client = ollama.Client(host=config.OLLAMA_HOST)
+        response = client.chat(
+            model=model,
+            messages=[{"role": "user", "content": EXPANSION_PROMPT.format(question=question)}],
+            options={"temperature": 0.0},  # детерминированный вывод, не нужна креативность
+        )
+        raw = response["message"]["content"].strip()
+        # Модель иногда добавляет пояснение в начало/конец несмотря на промпт -
+        # берём только строку со запятыми, режем на всякий случай по длине
+        raw = raw.replace("\n", " ").strip()[:300]
+        terms = [t.strip() for t in raw.split(",") if t.strip()]
+        return terms
+    except Exception as e:
+        print(f"[expand_query] LLM-расширение не сработало ({e}), использую только исходный запрос")
+        return []
+
+
+def expand_query(question: str) -> str:
+    """
+    Расширяет запрос перед поиском: сначала дешёвый глоссарий (мгновенно),
+    затем LLM (умнее, покрывает любые термины без ручного ведения списка).
+    Сам вопрос пользователю/модели в промпте не подменяется - расширение
+    используется только для поиска релевантных чанков.
+    """
+    extra_terms = _expand_query_glossary(question)
+    llm_terms = _expand_query_llm(question)
+    for term in llm_terms:
+        if term.lower() not in question.lower() and term not in extra_terms:
+            extra_terms.append(term)
+
+    if not extra_terms:
+        return question
+    return f"{question} {' '.join(extra_terms)}"
 
 
 def _tokenize(text: str) -> list[str]:
@@ -62,8 +165,12 @@ def retrieve(
     collection = get_collection()
     where = {"folder_path": folder_filter} if folder_filter else None
 
+    # Раскрываем запрос синонимами из глоссария перед поиском
+    # (сам вопрос пользователю/модели не показываем - только используем для поиска)
+    search_query = expand_query(question)
+
     # 1. Векторный поиск (берём с запасом, чтобы RRF было из чего выбирать)
-    q_embedding = embed_text(question)
+    q_embedding = embed_text(search_query)
     vector_n = max(top_k * 3, 15)
     vector_results = collection.query(
         query_embeddings=[q_embedding], n_results=vector_n, where=where
@@ -90,7 +197,7 @@ def retrieve(
         doc_by_id.setdefault(doc_id, doc)
         meta_by_id.setdefault(doc_id, meta)
 
-    bm25_ids = _bm25_search(question, all_docs, all_ids, top_k=vector_n)
+    bm25_ids = _bm25_search(search_query, all_docs, all_ids, top_k=vector_n)
 
     # 3. Слияние через RRF и обрезка до top_k
     fused_ids = _reciprocal_rank_fusion([vector_ids, bm25_ids])[:top_k]
