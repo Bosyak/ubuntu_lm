@@ -1,30 +1,29 @@
 # Repo RAG — RAG-база из markdown-документации GitHub-репозитория + Ollama
-.env.example
-# Скопируй этот файл в .env и поправь под себя:
-#   cp .env.example .env
+###.env.example
+### Скопируй этот файл в .env и поправь под себя:
 
-# ---- Репозиторий ----
-# URL публичного или приватного (тогда нужен токен в URL) репозитория
+### ---- Репозиторий ----
+### URL публичного или приватного (тогда нужен токен в URL) репозитория
 REPO_URL=...
-# Локальная папка, куда будет склонирован репозиторий
+### Локальная папка, куда будет склонирован репозиторий
 REPO_PATH=./data/repo
-# Ветка, которую тянем
+### Ветка, которую тянем
 REPO_BRANCH=main
 
-# ---- Ollama ----
+### ---- Ollama ----
 OLLAMA_HOST=http://localhost:11434
 EMBED_MODEL=nomic-embed-text
 LLM_MODEL=qwen2.5:14b
 
-# ---- Векторная БД (Chroma, локально на диске) ----
+### ---- Векторная БД (Chroma, локально на диске) ----
 CHROMA_PATH=./data/chroma_db
 COLLECTION_NAME=repo_docs
 
-# ---- Чанкинг ----
+### ---- Чанкинг ----
 CHUNK_SIZE=800
 CHUNK_OVERLAP=100
 
-# ---- API ----
+### ---- API ----
 API_HOST=0.0.0.0
 API_PORT=8000
 
@@ -54,6 +53,35 @@ API_PORT=8000
   ollama pull nomic-embed-text
   ```
 - Python 3.12 (`python3 --version`)
+###Установка 3.12.7 Python на новых версиях ubuntu:
+bash
+### Зависимости для сборки Python
+sudo apt update
+sudo apt install -y build-essential libssl-dev zlib1g-dev libbz2-dev \
+  libreadline-dev libsqlite3-dev curl git libncursesw5-dev xz-utils \
+  tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev
+
+###После установки добавь в ~/.bashrc:
+echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.bashrc
+echo '[[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.bashrc
+echo 'eval "$(pyenv init -)"' >> ~/.bashrc
+source ~/.bashrc
+
+pyenv install 3.12.7
+
+###Создай venv нужной версией:
+cd ~/repo-rag
+rm -rf venv
+~/.pyenv/versions/3.12.7/bin/python3.12 -m venv venv
+source venv/bin/activate
+python --version   # должно показать 3.12.7
+pip install --upgrade pip
+pip install -r requirements.txt
+
+
+### Установка pyenv
+curl https://pyenv.run | bash
+
 - Git (`git --version`)
 
 ---
