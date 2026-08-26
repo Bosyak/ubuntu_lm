@@ -28,7 +28,11 @@ SYSTEM_PROMPT = """Ты — ассистент, отвечающий на воп
 Если в контексте нет ответа - честно скажи, что не нашёл информацию в документации, не выдумывай.
 Обязательно указывай, из какого файла взята информация (смотри пометки [Файл: ...] в контексте)."""
 
-_TOKEN_RE = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9_]+")
+_TOKEN_RE = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9_]+(?:[-.][a-zA-Zа-яА-ЯёЁ0-9_]+)*")
+
+# Похоже на идентификатор: содержит цифру, достаточно длинное, может включать
+# дефисы/точки/подчёркивания (UUID, коды заказов, хэши, числовые ID и т.п.)
+_IDENTIFIER_RE = re.compile(r"[A-Za-zА-Яа-яЁё0-9][A-Za-zА-Яа-яЁё0-9_.-]{2,}")
 
 GLOSSARY_PATH = Path(__file__).parent / "glossary.json"
 
@@ -153,6 +157,36 @@ def _reciprocal_rank_fusion(rank_lists: list[list[str]], k: int = 60) -> list[st
     return [doc_id for doc_id, _ in sorted(scores.items(), key=lambda x: x[1], reverse=True)]
 
 
+def _extract_identifiers(question: str) -> list[str]:
+    """
+    Достаёт из вопроса кандидатов на "идентификатор" - числа, UUID, коды,
+    хэши. Критерий: строка длиной от 3 символов, содержащая хотя бы одну
+    цифру (обычные слова без цифр отсекаем, чтобы не ловить каждое слово подряд).
+    """
+    candidates = _IDENTIFIER_RE.findall(question)
+    return [c for c in candidates if any(ch.isdigit() for ch in c)]
+
+
+def _exact_match_search(question: str, all_docs: list[str], all_ids: list[str]) -> list[str]:
+    """
+    Ищет буквальное вхождение подстроки-идентификатора в текстах чанков.
+    В отличие от BM25 (который токенизирует и может "раздробить" UUID по дефисам)
+    и вектора (который ищет по смыслу, а не по точному значению), этот поиск
+    ловит именно точное совпадение конкретного ID/кода/числа - то, что векторный
+    и обычный keyword-поиск иногда упускают.
+    """
+    identifiers = _extract_identifiers(question)
+    if not identifiers:
+        return []
+
+    matched_ids = []
+    for doc_id, doc in zip(all_ids, all_docs):
+        doc_lower = doc.lower()
+        if any(ident.lower() in doc_lower for ident in identifiers):
+            matched_ids.append(doc_id)
+    return matched_ids
+
+
 def retrieve(
     question: str, top_k: int = 5, folder_filter: str | None = None, hybrid: bool = True
 ) -> list[dict]:
@@ -199,10 +233,17 @@ def retrieve(
 
     bm25_ids = _bm25_search(search_query, all_docs, all_ids, top_k=vector_n)
 
-    # 3. Слияние через RRF и обрезка до top_k
-    fused_ids = _reciprocal_rank_fusion([vector_ids, bm25_ids])[:top_k]
+    # 3. Точный поиск по идентификаторам (числа, UUID, коды) - ищем по
+    # исходному вопросу, а не по расширенному, так как LLM/глоссарий могут
+    # "потерять" точное значение ID при перефразировании.
+    exact_ids = _exact_match_search(question, all_docs, all_ids)
 
-    return [{"text": doc_by_id[i], "metadata": meta_by_id[i]} for i in fused_ids]
+    # 4. Слияние: точные совпадения по ID идут первыми гарантированно,
+    # дальше добиваем результатами RRF (вектор + BM25) до top_k
+    fused_ids = _reciprocal_rank_fusion([vector_ids, bm25_ids])
+    final_ids = list(dict.fromkeys(exact_ids + fused_ids))[:top_k]
+
+    return [{"text": doc_by_id[i], "metadata": meta_by_id[i]} for i in final_ids]
 
 
 def build_prompt(question: str, chunks: list[dict]) -> str:

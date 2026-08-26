@@ -10,12 +10,20 @@
 import argparse
 
 from ingest import embed_text, get_collection
-from rag import retrieve
+from rag import retrieve, expand_query, _extract_identifiers
 
 
 def debug_search(question: str, top_k: int = 8):
     collection = get_collection()
     print(f"Всего чанков в базе: {collection.count()}\n")
+
+    identifiers = _extract_identifiers(question)
+    if identifiers:
+        print(f"Обнаружены идентификаторы для точного поиска: {identifiers}\n")
+
+    expanded = expand_query(question)
+    if expanded != question:
+        print(f"Запрос раскрыт глоссарием/LLM: {expanded!r}\n")
 
     # Чистый векторный поиск (для сравнения)
     q_embedding = embed_text(question)
